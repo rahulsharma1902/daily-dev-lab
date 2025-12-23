@@ -22,6 +22,13 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+# Try to load .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent.parent / ".env")
+except ImportError:
+    pass  # dotenv not installed, will use environment variables directly
+
 
 # Get the project root directory
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
@@ -328,6 +335,55 @@ def git_commit(filepath: str, commit_type: str, topic: str) -> bool:
         return False
 
 
+def git_push() -> bool:
+    """
+    Push commits to GitHub using token from environment.
+    
+    Uses GITHUB_TOKEN from .env file for authentication.
+    This allows pushing even when another Git account is logged in.
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    token = os.environ.get("GITHUB_TOKEN")
+    username = os.environ.get("GITHUB_USERNAME")
+    repo = os.environ.get("GITHUB_REPO", "daily-dev-lab")
+    
+    if not token or not username:
+        print("❌ Error: GITHUB_TOKEN and GITHUB_USERNAME must be set in .env file")
+        print("   Copy .env.example to .env and fill in your values")
+        return False
+    
+    # Build authenticated remote URL
+    auth_url = f"https://{username}:{token}@github.com/{username}/{repo}.git"
+    
+    try:
+        # Get current branch
+        result = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+            text=True
+        )
+        branch = result.stdout.strip() or "main"
+        
+        # Push using authenticated URL
+        subprocess.run(
+            ["git", "push", auth_url, branch],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True
+        )
+        
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"❌ Push failed: {e}")
+        if e.stderr:
+            print(f"   {e.stderr.decode() if isinstance(e.stderr, bytes) else e.stderr}")
+        return False
+
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -339,6 +395,9 @@ Examples:
   python daily_commit.py --type challenge --name "two-sum"
   python daily_commit.py --type snippet --topic "API helper" --lang python
   python daily_commit.py --type experiment --topic "FastAPI basics"
+  
+  # With auto-push (requires .env with GITHUB_TOKEN)
+  python daily_commit.py --type til --topic "Topic" --push
         """
     )
     
@@ -372,6 +431,12 @@ Examples:
     )
     
     parser.add_argument(
+        "--push",
+        action="store_true",
+        help="Push to GitHub after commit (uses GITHUB_TOKEN from .env)"
+    )
+    
+    parser.add_argument(
         "--content", "-c",
         help="Optional content for TIL entries"
     )
@@ -399,6 +464,13 @@ Examples:
     if not args.no_commit:
         if git_commit(filepath, args.type, topic):
             print(f"✅ Committed: {args.type}: {topic}")
+            
+            # Push if requested
+            if args.push:
+                if git_push():
+                    print("✅ Pushed to GitHub!")
+                else:
+                    print("⚠️  Commit successful but push failed")
         else:
             print("⚠️  File created but commit failed (git might not be initialized)")
     
@@ -407,3 +479,4 @@ Examples:
 
 if __name__ == "__main__":
     exit(main())
+
